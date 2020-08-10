@@ -89,7 +89,12 @@ XWindow_display(){
 
 unset -f XWindow_displayLast
 XWindow_displayLast(){
+	if [ ! -z "$X_WINDOW_BACKGROUND_PID" ]; then
+		kill $X_WINDOW_BACKGROUND_PID
+		X_WINDOW_BACKGROUND_PID=
+	fi
 	DISPLAY=${X_WINDOW_DISPLAY_HOST:-$DISPLAY} display -update 1 -resize 1920x1080 xwd:$X_WINDOW_TMP_FILE -crop $(XWindow_getCropGeometry) &
+	X_WINDOW_BACKGROUND_PI=$!
 }
 
 unset -f XWindow_getCroppedPixel
@@ -275,6 +280,9 @@ _XWindow_exit(){
 	if [ ! -z "${X_WINDOW_TMP_FILE-}" -a -f "${X_WINDOW_TMP_FILE}" ]; then
 		rm ${X_WINDOW_TMP_FILE}
 	fi
+	if [ ! -z "$X_WINDOW_BACKGROUND_PID" ]; then
+		kill $X_WINDOW_BACKGROUND_PID
+	fi
 }
 
 if [ ! -z "${X_WINDOW_DISPLAY-}" ]; then
@@ -292,6 +300,7 @@ if [ "${X_WINDOW_INTERRUPT-x}" = "x" ]; then
 	X_WINDOW_INTERRUPT=
 	X_WINDOW_TMP_FILE=
 	X_WINDOW_LOCK=
+	X_WINDOW_BACKGROUND_PID=
 	X_WINDOW_ID=
 	X_WINDOW_WIDTH=
 	X_WINDOW_HEIGHT=

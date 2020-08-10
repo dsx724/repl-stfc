@@ -26,7 +26,12 @@ _STFC_unlock(){
 
 unset -f STFC_displayLast
 STFC_displayLast(){
+	if [ ! -z "$STFC_BACKGROUND_PID" ]; then
+		kill $STFC_BACKGROUND_PID
+		STFC_BACKGROUND_PID=
+	fi
 	DISPLAY=${X_WINDOW_DISPLAY_HOST:-$DISPLAY} display -update 1 tiff:$STFC_TMP_FILE &
+	STFC_BACKGROUND_PID=$!
 }
 
 unset -f STFC_getText
@@ -158,20 +163,26 @@ _STFC_parseDuration(){
 	string=$1
 	string=${string//O/0}
 	string=${string//l/1}
+	string=${string//i/1}
 	#string=${string//d/2s}
+	string=${string//S/5}
 	string=${string//T/1}
 	string=${string//I/1}
 	string=${string//é/6}
+	string=${string//e/2}
 	if [ ${#string} -ne 3 ]; then
 		echo "$FUNCNAME time parse failed: $string" >&2
 		return 1
 	fi
-	if [ ! -z "${string//[0-9]*[ms]/}" ]; then
+	if [ ! -z "${string//[0-9]*[hms]/}" ]; then
 		echo "$FUNCNAME invalid character found: $string" >&2
 		return 1
 	fi
 	seconds=0
 	case "${string: -1}" in
+		h)
+			seconds=$((3600*$((10#${string:0:2}))))
+			;;
 		m)
 			seconds=$((60*$((10#${string:0:2}))))
 			;;
@@ -183,13 +194,12 @@ _STFC_parseDuration(){
 			return 1
 			;;
 	esac
-	echo $seconds
-	
+	echo ${seconds:-0}
 }
 
 unset -f STFC_getTargetBoxAction2Text
 STFC_getTargetBoxAction2Text(){
-	text=$(STFC_getText 722 650 215 60 invert)
+	text=$(STFC_getText 722 650 215 60 invert 2> /dev/null)
 	#text=$(STFC_getText 730 760 215 80 invert)
 	action=${text%% *}
 	duration=${text#* }
@@ -283,6 +293,9 @@ STFC_getShipMenuStatus(){
 		repairing)
 			echo "REPAIRING"
 			;;
+		home)
+			echo "HOME"
+			;;
 		*)
 			echo "$FUNCNAME unknown state: $text." >&2
 			return 1
@@ -340,7 +353,7 @@ STFC_selectShip(){
 			XWindow_moveMouse 365 870 click 1
 			;;
 		2)
-			XWindow_moveMouse 445 870 click 1
+			XWindow_moveMouse 455 870 click 1
 			;;
 		3)
 			XWindow_moveMouse 545 870 click 1
@@ -353,13 +366,86 @@ STFC_selectShip(){
 	fi
 }
 
+unset -f STFC_isShipIdle
+STFC_isShipIdle(){
+	if [ -z "${1:-}" ]; then
+		echo "$FUNCNAME SHIP#" >&2
+		return 1
+	fi
+	ship=$1
+	offset_y=824
+	if STFC_isShipSelected $ship; then
+		offset_y=810
+	fi
+	text=
+	case $ship in
+		1)
+			text=$(STFC_getText 378 $offset_y 28 40 invert 6 -colorspace ycbcr)
+			;;
+		2)
+			text=$(STFC_getText 468 $offset_y 28 40 invert 6 -colorspace ycbcr)
+			;;
+		3)
+			text=$(STFC_getText 559 $offset_y 28 40 invert 6 -colorspace ycbcr)
+			;;
+	esac
+	case "${text,,}" in
+		a)
+			return 0 #upgrade
+			;;
+		co)
+			return 0 #home
+			;;
+		o)
+			return 0 #home
+			;;
+		on)
+			return 1 #mining?
+			;;
+		vf)
+			return 1 #warping
+			;;
+		vv)
+			return 1 #warping
+			;;
+		@)
+			return 0 #home
+			;;
+		">")
+			return 1 #impulse
+			;;
+		"\\")
+			return 1 #mining?
+			;;
+		
+	esac
+}
+
+
 unset -f STFC_openShipMenu
 STFC_openShipMenu(){
-	ship=$(STFC_getShipSelected)
+	if [ -z "${1:-}" ]; then
+		echo "$FUNCNAME SHIP#" >&2
+		return 1
+	fi
+	ship=$1
+	ship_selected=$(STFC_getShipSelected)
+	if [ "$ship_selected" != "$ship" ]; then
+		STFC_selectShip $ship
+		if [ $? -ne 0 ]; then
+			echo "$FUNCNAME unable to select ship $ship." >&2
+			return 1
+		fi
+		STFC_sleep 1
+	fi
 	if STFC_getShipMenuStatus > /dev/null 2>&1; then
 		return
 	fi
 	STFC_selectShip $ship
+	if [ $? -ne 0 ]; then
+		echo "$FUNCNAME unable to select ship $ship." >&2
+		return 1
+	fi
 	STFC_sleep 1
 	if ! STFC_getShipMenuStatus > /dev/null 2>&1; then
 		echo "$FUNCNAME unable to open ship $ship menu!" >&2
@@ -369,12 +455,14 @@ STFC_openShipMenu(){
 
 unset -f STFC_getShipMenuButtonText
 STFC_getShipMenuButtonText(){
-	if [ -z "${1:-}" ]; then
-		echo "$FUNCNAME MENUBUTTON#" >&2
+	if [ -z "${1:-}" -o -z "${2:-}" ]; then
+		echo "$FUNCNAME SHIP# MENUBUTTON#" >&2
 		return 1
 	fi
-	STFC_openShipMenu
-	case $1 in
+	ship=$1
+	button=$2
+	STFC_openShipMenu $1
+	case $button in
 		1)
 			text=$(STFC_getText 16 705 190 65 invert 6 -brightness-contrast 30x50)
 			case ${text,,} in
@@ -387,7 +475,7 @@ STFC_getShipMenuButtonText(){
 			esac
 			;;
 		2)
-			text=$(STFC_getText 16 805 190 65 invert 6 -brightness-contrast 30x50)
+			text=$(STFC_getText 16 805 190 65 invert 6 -brightness-contrast 40x50)
 			text1=${text%% *}
 			case ${text1,,} in
 				locate)
@@ -468,12 +556,13 @@ STFC_clickShipMenuButton(){
 
 unset -f STFC_closeShipMenu
 STFC_closeShipMenu(){
+	: #TODO FINISH THIS
 	STFC_getSelectedShip
 }
 
 unset -f STFC_getShipMaterialStatus
 STFC_getShipMaterialStatus(){
-	:
+	: #TODO FINISH THIS
 }
 
 unset -f _STFC_analyzeBar
@@ -543,21 +632,21 @@ STFC_getShipStatus(){
 		return 1
 	fi
 	invert=
-	offset=0
+	offset_y=955
 	if ! STFC_isShipSelected $1; then
 		invert=invert
-		offset=12
+		offset=967
 	fi
 	text=
 	case $1 in
 		1)
-			text=$(STFC_getText 321 $((955+offset)) 85 30 $invert)
+			text=$(STFC_getText 321 $offset_y 85 30 $invert)
 			;;
 		2)
-			text=$(STFC_getText 415 $((955+offset)) 85 30 $invert)
+			text=$(STFC_getText 415 $offset_y 85 30 $invert)
 			;;
 		3)
-			text=$(STFC_getText 503 $((955+offset)) 85 30 $invert)
+			text=$(STFC_getText 503 $offset_y 85 30 $invert)
 			;;
 	esac
 	text=${text// /}
@@ -588,6 +677,54 @@ STFC_getShipStatus(){
 			return 1
 			;;
 	esac
+}
+
+unset -f STFC_getShipTimer
+STFC_getShipTimer(){
+	if [ -z "${1:-}" ]; then
+		echo "$FUNCNAME SHIP#" >&2
+		return 1
+	fi
+	ship=$1
+	offset_y=774
+	if ! STFC_isShipSelected $ship; then
+		offset_y=787
+	fi
+	text=
+	case "$ship" in
+		1)
+			text=$(STFC_getText 330 $offset_y 70 30 invert)
+			;;
+		2)
+			text=$(STFC_getText 421 $offset_y 70 30 invert)
+			;;
+		3)
+			text=$(STFC_getText 511 $offset_y 70 30 invert)
+			;;
+	esac
+	text=${text// /}
+	text=${text//./}
+	#if [ ! -z "${text//[0-9hms]/}" ]; then
+	#	echo "$FUNCNAME ship $ship returned invalid timer: $text" >&2
+	#	return 1
+	#fi
+	seconds=0
+	while [ ! -z "$text" ]; do
+		number=$(_STFC_parseDuration ${text:0:3})
+		if [ $? -ne 0 ]; then
+			echo "$FUNCNAME error on: $text" >&2
+			return 1
+		fi
+		seconds=$((seconds+$number))
+		text=${text:3}
+	done
+	echo $seconds
+}
+
+unset -f STFC_getShipMinedCounter
+STFC_getShipMinedCounter(){
+	# 334 898 63 30
+	:
 }
 
 unset -f STFC_isPeaceShieldWarning
@@ -727,146 +864,298 @@ STFC_moveViewportRandomlyAutomate(){
 	done
 }
 
+unset -f STFC_checkAccidentalScreen
+STFC_checkAccidentalScreen(){
+	if STFC_isBattleLog; then
+		echo "$FUNCNAME somehow entered battlelog!" >&2
+		STFC_cancelBattleLog
+		return 0
+	elif STFC_isPeaceShieldWarning; then
+		echo "$FUNCNAME almost attacked player!" >&2
+		STFC_cancelPeaceShieldWarning
+		return 0
+	fi
+	return 1
+}
+
 unset -f STFC_attackAutomate
 STFC_attackAutomate(){
 	
 	STFC_INTERRUPT=$FUNCNAME
 	trap _STFC_interrupt INT
 
-	stop=0
-	stop_max=20
-	action=
-	notarget=0
 	ship=2
-	shield=
+
+	accident=0
+	accident_max=5
+	error=0
+	error_max=20 #number of errors before stopping
+	shield_min=90 #minimum shield before attacking
+	health_min=90 #minimum health before repair
+	check_max=5 #post attack checks
+	
+	#stack variables
+	action= #holder for box action strings
+	ship_selected= #holder for the selected ship
+
+	#counters
+	check= #current post attack check cycle
+	notarget= #counter for cycles with no target
+	
+	#ship
 	health=
+	shield=
 	status=
-	alive=1
-	check=
-	check_max=5
-	destroyed=0
+	repair=
+	go_home=
+
 	while [ "${STFC_INTERRUPT:-}" = "$FUNCNAME" ]; do
+		#check for selected ship, only fails in battle or not selected
 		ship_selected=$(STFC_getShipSelected)
 		if [ $? -ne 0 ]; then
-			if STFC_isBattleLog; then
-				echo "$FUNCNAME somehow entered battlelog!" >&2
-				STFC_cancelBattleLog
-				continue
-			elif STFC_isPeaceShieldWarning; then
-				echo "$FUNCNAME almost attacked player!" >&2
-				STFC_cancelPeaceShieldWarning
+			if STFC_checkAccidentalScreen; then
+				if [ "$accident" -ge "$accident_max" ]; then
+					echo "$FUNCNAME too many accidents." >&2
+					break
+				fi
+				((accident++))
 				continue
 			fi
 		fi
+		accident=0
 		if [ "$ship_selected" -ne "$ship" ]; then
 			STFC_selectShip $ship
 			if [ $? -ne 0 ]; then
 				break
 			fi
 		fi
-		STFC_getTarget click 1
-		if [ $? -ne 0 ]; then
-			((notarget++))
-			if [ "$notarget" -gt 1 ]; then
-				STFC_moveViewportRandomly
-				notarget=1
-			fi
-			STFC_sleep 2
-			continue
-		fi
-		STFC_sleep 1
-		action=$(STFC_getTargetBoxAction2Text)
-		if [ "$?" -ne 0 ]; then
-			_XWindow_lock
-			XWindow_save samples/parsefail/$(date '+%Y%m%d%H%M%S')
-			_XWindow_unlock
-			echo "$FUNCNAME parsefail." >&2
-			((stop++))
-			STFC_moveViewportRandomly
-			#also consider moving viewport
-		elif [ "${action%% *}" = "ATTACK" ]; then
-			notarget=0
-			alive=0
-			XWindow_moveMouse 735 680 click 1
-			if STFC_isPeaceShieldWarning; then
-				echo "$FUNCNAME almost attacked player!" >&2
-				STFC_cancelPeaceShieldWarning
-				continue
-			fi
-			STFC_sleep ${action##* }
-			STFC_sleep 7
-			check=0
-			while true; do
-				shield=$(STFC_getShipShield $ship 2> /dev/null)
-				if [ $? -ne 0 -o -z "$shield" ]; then
-					if [ "$check" -eq 5 ]; then
-						echo "$FUNCNAME are we destroyed?" >&2
-						((stop+=stop_max))
-						break
-					fi
-					((check++))
-				elif [ "$shield" -gt 95 ]; then
-					alive=1
-					break
-				fi
-				STFC_sleep 1
-			done
-			SECONDS=0
-		else
-			_XWindow_lock
-			XWindow_save samples/clickmiss/$(date '+%Y%m%d%H%M%S')
-			_XWindow_unlock
-			echo "$FUNCNAME click missed." >&2
-		fi
-		if ! STFC_isShipSelected $ship; then
-			((stop+=stop_max))
-		fi
-		if [ "$alive" -ne 1 ]; then
-			status=$(STFC_getShipStatus $ship)
-			if [ "$status" = "DESTROYED" ]; then
-				destroyed=1
-				((stop+=stop_max))
-			fi
-		fi
-		if [ "$stop" -ge "$stop_max" ]; then
-			if [ "$destroyed" -eq 1 ]; then
-				STFC_selectShip $ship || break
-				STFC_sleep 1
-				STFC_openShipMenu || break
-				STFC_sleep 1
-				menu_button=$(STFC_getShipMenuButtonText 2)
+
+		#check ship status
+		status=$(STFC_getShipStatus $ship 2> /dev/null)
+		if [ $? -eq 0 ]; then
+			if [ "$status" = "HOME" ]; then
+				health=100
+				shield=100
+				repair=
+				#go back to system or pick target
+				: #TODO GO TO SYSTEM
+					#STFC click random spot
+					#STFC check for go and parse time
+					#STFC click go
+					#STFC sleep time
+					#STFC find target
+					#STFC check target in system
+			elif [ "$status" = "DESTROYED" ]; then
+				health=0
+				shield=0
+				menu_button=$(STFC_getShipMenuButtonText $ship 2)
 				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unable to get ship menu button text to start repair." >&2
 					break;
 				fi
 				STFC_sleep 1
 				if [ "${menu_button%% *}" = "REPAIR" ]; then
 					STFC_clickShipMenuButton 2
+					menu_status=$(STFC_getShipMenuStatus)
+					if [ $? -ne 0 ]; then
+						echo "$FUNCNAME unable to get ship menu status text." >&2
+						break;
+					fi
+					if [ "$menu_status" != "REPAIRING" ]; then
+						echo "$FUNCNAME repairing failed." >&2
+						break;
+					fi
 				fi
 				sleep_time=${menu_button##* }
 				((sleep_time-=300))
 				if [ $sleep_time -gt 0 ]; then
 					STFC_sleep $sleep_time
 				fi
-				menu_button=$(STFC_getShipMenuButtonText 3)
+				menu_button=$(STFC_getShipMenuButtonText $ship 3)
 				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unable to get ship menu button text to finish repair." >&2
 					break;
 				fi
-				STFC_sleep 1
 				if [ "$menu_button" = "FREE" ]; then
 					STFC_clickShipMenuButton 3
+					status=$(STFC_getShipStatus $ship)
+					continue
+				else
+					# TODO NEED TO FIGURE OUT WHY
+					echo "$FUNCNAME unexpected repair status." >&2
+					break
 				fi
-				#STFC click random spot
-				#STFC check for go and parse time
-				#STFC click go
-				#STFC sleep time
-				#STFC find target
-				#STFC check target in system
 			else
-				break
+				#TODO find more states
+				echo "$FUNCNAME unexpected ship state: $status" >&2
+			fi
+		else
+			if [ "${go_home:-0}" -eq 1 ]; then
+				health=$(STFC_getShipHealth $ship)
+				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unexpected and unsupported health status." >&2
+					return 1
+				fi
+				shield=$(STFC_getShipShield $ship)
+				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unexpected and unsupported shield status." >&2
+					return 1
+				fi
+				STFC_openShipMenu $ship
+				if [ $? -ne 0 ]; then
+				echo "$FUNCNAME unable to get ship starting status." >&2
+					return 1
+				fi
+				status=$(STFC_getShipMenuStatus)
+				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unable to get ship menu starting status." >&2
+					return 1
+				fi
+				case "$status" in
+					AWAITING_ORDERS)
+						action=$(STFC_getShipMenuButtonText $ship 3)
+						if [ $? -ne 0 ]; then
+							echo "$FUNCNAME unable to determine ship menu action 3." >&2
+							return 1
+						fi
+						case "$action" in
+							RECALL)
+								STFC_clickShipMenuButton 3
+								status=$(STFC_getShipMenuStatus)
+								echo "$FUNCNAME returning home status: $status" >&2
+								go_home=
+								repair=1
+								STFC_sleep 1
+								sleep_timer=$(STFC_getShipTimer $ship)
+								if [ $? -eq 0 ]; then
+									STFC_sleep $sleep_timer
+								fi
+								continue
+								;;
+							*)
+								echo "$FUNCNAME unexpected and unsupported ship menu button 3 action." >&2
+								return 1
+								;;
+						esac
+						;;
+					*)
+						echo "$FUNCNAME unsupported go_home status." >&2
+				esac
+			elif [ "${repair:-0}" -eq 1 ]; then
+				status=$(STFC_getShipMenuStatus)
+				if [ $? -ne 0 ]; then
+					echo "$FUNCNAME unable to get ship menu starting status." >&2
+					return 1
+				fi
+				case "$status" in
+					DAMAGED)
+						action=$(STFC_getShipMenuButtonText $ship 2)
+						if [ $? -ne 0 ]; then
+							echo "$FUNCNAME unable to determine ship menu action 2." >&2
+							return 1
+						fi
+						case "${action%% *}" in
+							REPAIR)
+								STFC_clickShipMenuButton 2
+								repair=
+								# TODO NEED TO FIGURE OUT WHY
+								sleep_time=$(STFC_getShipTimer $ship)
+								((sleep_time-=300))
+								if [ $sleep_time -gt 0 ]; then
+									STFC_sleep $sleep_time
+								fi
+								menu_button=$(STFC_getShipMenuButtonText $ship 3)
+								if [ $? -ne 0 ]; then
+									echo "$FUNCNAME unable to get ship menu button text to finish repair." >&2
+									break;
+								fi
+								if [ "$menu_button" = "FREE" ]; then
+									STFC_clickShipMenuButton 3
+									continue
+								fi
+								;;
+							*)
+								echo "$FUNCNAME unexpected and unsupported ship menu button 2 action." >&2
+								return 1
+								;;
+						esac
+						;;
+				esac
+			else
+				#TODO SEARCH FOR REPAIR ICON AND REMOVE REPAIR FLAG
+				:
 			fi
 		fi
-		#CHECK DESTROYED
-		#break
+
+		#acquire target
+		STFC_getTarget click 1
+		if [ $? -ne 0 ]; then
+			#no target was found
+			if [ "${notarget:-0}" -gt 1 ]; then
+				STFC_moveViewportRandomly
+				notarget=1
+			else
+				((notarget++))
+			fi
+			continue
+		fi
+		STFC_sleep 1
+
+		#check target action
+		action=$(STFC_getTargetBoxAction2Text)
+		if [ "$?" -ne 0 ]; then
+			#check if we accidentally click into something
+			((notarget++))
+			STFC_checkAccidentalScreen && continue
+			#possibly taken or dead target in which save image and increment no target
+			echo "$FUNCNAME taken or dead target." >&2
+			_XWindow_lock
+			XWindow_save samples/parsefail/$(date '+%Y%m%d%H%M%S')
+			_XWindow_unlock
+			continue
+		fi
+		if [ "${action%% *}" = "ATTACK" ]; then
+			notarget=0
+			XWindow_moveMouse 735 680 click 1 #attack button
+			STFC_sleep ${action##* }
+			#TODO check in battle or target taken and retarget
+			STFC_sleep 7
+			check=0
+			while true; do
+				health=$(STFC_getShipHealth $ship 2> /dev/null)
+				if [ $? -ne 0 -o -z "$health" ]; then
+					if [ "$check" -eq "$check_max" ]; then
+						echo "$FUNCNAME are we destroyed?" >&2
+						repair=1
+						break
+					fi
+					((check++))
+				elif [ "$health" -lt "$health_min" ]; then
+					go_home=1
+					break
+				fi
+				shield=$(STFC_getShipShield $ship 2> /dev/null)
+				if [ $? -ne 0 -o -z "$shield" ]; then
+					if [ "$check" -eq "$check_max" ]; then
+						echo "$FUNCNAME are we destroyed?" >&2
+						break
+					fi
+					((check++))
+				elif [ "$shield" -lt "$shield_min" ]; then
+					STFC_sleep 1
+				else
+					#shield restored
+					break
+				fi
+			done
+		else
+			echo "$FUNCNAME unknown action: $action" >&2
+			_XWindow_lock
+			XWindow_save samples/unknownaction/$(date '+%Y%m%d%H%M%S')
+			_XWindow_unlock
+			continue
+		fi
+
 	done
 }
 
@@ -908,11 +1197,15 @@ _STFC_exit(){
 	if [ ! -z "${STFC_TMP_FILE-}" -a -f "${STFC_TMP_FILE}" ]; then
 		rm ${STFC_TMP_FILE}
 	fi
+	if [ ! -z "$STFC_BACKGROUND_PID" ]; then
+		kill $STFC_BACKGROUND_PID
+	fi
 }
 
 if [ "${STFC_INTERRUPT-x}" = "x" ]; then
 	STFC_INTERRUPT=
 	STFC_TMP_FILE=
 	STFC_LOCK=
+	STFC_BACKGROUND_PID=
 	_STFC_setup
 fi
