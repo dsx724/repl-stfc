@@ -237,8 +237,8 @@ XWindow_getMouse(){
 	echo $mouse_px $mouse_py
 }
 
-unset -f XWindow_getMouseLoop
-XWindow_getMouseLoop(){
+unset -f XWindow_getMouseAuto
+XWindow_getMouseAuto(){
 	X_WINDOW_INTERRUPT=$FUNCNAME
 	trap _XWindow_interrupt INT
 	while [ "$X_WINDOW_INTERRUPT" = "$FUNCNAME" ]; do
